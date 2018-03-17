@@ -4,10 +4,12 @@ import (
 	"crypto/aes"
 	"crypto/md5"
 	"crypto/subtle"
+	"encoding/hex"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/securecookie"
@@ -22,6 +24,8 @@ type configuration struct {
 	Bind       string
 	Token      string
 	Realm      string
+	HashKey    []byte
+	BlockKey   []byte
 }
 
 const cookieName = "auth"
@@ -29,6 +33,9 @@ const cookieName = "auth"
 var (
 	config       configuration
 	secureCookie *securecookie.SecureCookie
+
+	hashKeyString  string
+	blockKeyString string
 )
 
 func init() {
@@ -38,13 +45,33 @@ func init() {
 	flag.StringVarP(&config.PrivateURL, "private", "c", "http://127.0.0.1:8001", "A URL to serve to authenticated users.")
 	flag.StringVarP(&config.Bind, "bind", "b", "localhost:8000", "An address and port to bind to.")
 	flag.StringVarP(&config.Token, "token", "t", uuid.New().String(), "The authentication token to verify authenticated users.")
+	flag.StringVarP(&hashKeyString, "hash-key", "H", "", "A hexidecimal representation of a "+strconv.Itoa(aes.BlockSize)+" byte hash key, to secure authentication cookies.")
+	flag.StringVarP(&blockKeyString, "block-key", "B", "", "A hexidecimal representation of a "+strconv.Itoa(aes.BlockSize)+" byte block key, to secure authentication cookies.")
 	flag.StringVarP(&config.Realm, "realm", "r", "", "A string that identifies the authentication popup.")
 }
 
 func main() {
+	var err error
+
 	flag.Parse()
 
-	secureCookie = securecookie.New(securecookie.GenerateRandomKey(aes.BlockSize), securecookie.GenerateRandomKey(aes.BlockSize))
+	if hashKeyString == "" {
+		config.HashKey = securecookie.GenerateRandomKey(aes.BlockSize)
+	} else {
+		config.HashKey, err = hex.DecodeString(hashKeyString)
+		if err != nil {
+			log.Panic("Couldn't decode hash key; ", err.Error())
+		}
+	}
+
+	if blockKeyString == "" {
+		config.BlockKey = securecookie.GenerateRandomKey(aes.BlockSize)
+	} else {
+		config.BlockKey, err = hex.DecodeString(blockKeyString)
+		if err != nil {
+			log.Panic("Couldn't decode block key; ", err.Error())
+		}
+	}
 
 	if config.Password == "" || config.Username == "" {
 		log.Panic("Please specify a username and password.")
@@ -54,6 +81,8 @@ func main() {
 		log.Println("Realm not specified... Setting to", config.Bind)
 		config.Realm = config.Bind
 	}
+
+	secureCookie = securecookie.New(config.HashKey, config.BlockKey)
 
 	log.Print(`
 
