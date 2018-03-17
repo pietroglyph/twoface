@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strconv"
 
 	"github.com/google/uuid"
@@ -45,13 +46,21 @@ func init() {
 	flag.StringVarP(&config.PrivateURL, "private", "c", "http://127.0.0.1:8001", "A URL to serve to authenticated users.")
 	flag.StringVarP(&config.Bind, "bind", "b", "localhost:8000", "An address and port to bind to.")
 	flag.StringVarP(&config.Token, "token", "t", uuid.New().String(), "The authentication token to verify authenticated users.")
-	flag.StringVarP(&hashKeyString, "hash-key", "H", "", "A hexidecimal representation of a "+strconv.Itoa(aes.BlockSize)+" byte hash key, to secure authentication cookies.")
-	flag.StringVarP(&blockKeyString, "block-key", "B", "", "A hexidecimal representation of a "+strconv.Itoa(aes.BlockSize)+" byte block key, to secure authentication cookies.")
+	flag.StringVar(&hashKeyString, "hash-key", "", `A hexidecimal representation of a `+strconv.Itoa(aes.BlockSize)+` byte hash key, to secure authentication cookies.
+	Do 'twoface generate-keys' to get some suitable keys.`)
+	flag.StringVar(&blockKeyString, "block-key", "", `A hexidecimal representation of a `+strconv.Itoa(aes.BlockSize)+` byte block key, to secure authentication cookies.
+	Do 'twoface generate-keys' to get some suitable keys`)
 	flag.StringVarP(&config.Realm, "realm", "r", "", "A string that identifies the authentication popup.")
 }
 
 func main() {
 	var err error
+
+	if len(os.Args) > 1 && os.Args[1] == "generate-keys" {
+		log.Println("Generating two hexedecimally encoded", strconv.Itoa(aes.BlockSize), "byte keys...")
+		log.Println(hex.EncodeToString(securecookie.GenerateRandomKey(aes.BlockSize)), "/", hex.EncodeToString(securecookie.GenerateRandomKey(aes.BlockSize)))
+		return
+	}
 
 	flag.Parse()
 
