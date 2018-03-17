@@ -21,6 +21,7 @@ type configuration struct {
 	PrivateURL string
 	Bind       string
 	Token      string
+	Realm      string
 }
 
 const cookieName = "auth"
@@ -36,6 +37,7 @@ func init() {
 	flag.StringVarP(&config.PrivateURL, "private", "c", "http://127.0.0.1:8001", "A URL to serve to authenticated users.")
 	flag.StringVarP(&config.Bind, "bind", "b", "localhost:8000", "An address and port to bind to.")
 	flag.StringVarP(&config.Token, "token", "t", uuid.New().String(), "The authentication token to verify authenticated users.")
+	flag.StringVarP(&config.Realm, "realm", "r", "", "A string that identifies the authentication popup.")
 }
 
 func main() {
@@ -45,6 +47,11 @@ func main() {
 
 	if config.Password == "" {
 		log.Panic("Please specify a password.")
+	}
+
+	if config.Realm == "" {
+		log.Println("Realm not specified... Setting to", config.Bind)
+		config.Realm = config.Bind
 	}
 
 	log.Print(`
@@ -57,10 +64,9 @@ initial authentication passwords will be sent in _plaintext_!
 
 `)
 
-	a := auth.NewDigestAuthenticator(config.Bind, func(user, realm string) string {
+	a := auth.NewDigestAuthenticator(config.Realm, func(user, realm string) string {
 		// Yes, I know http digest auth is insecure without TLS
-		// Yes, I know about the replay attacks
-		sum := md5.Sum([]byte(user + ":" + config.Bind + ":" + config.Password))
+		sum := md5.Sum([]byte(user + ":" + realm + ":" + config.Password))
 		return hex.EncodeToString(sum[:])
 	})
 
@@ -88,6 +94,7 @@ func authHandler(w http.ResponseWriter, r *auth.AuthenticatedRequest) {
 			Value:    encoded,
 			Path:     "/",
 			HttpOnly: true,
+			MaxAge:   2147483647, // Maximum possible value, we don't want this to expire
 		}
 		http.SetCookie(w, cookie)
 		w.Write([]byte("Succsessfully authenticated and stored session cookie as " + r.Username))
