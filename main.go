@@ -3,19 +3,19 @@ package main
 import (
 	"crypto/aes"
 	"crypto/md5"
-	"encoding/hex"
+	"crypto/subtle"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 
-	auth "github.com/abbot/go-http-auth"
 	"github.com/google/uuid"
 	"github.com/gorilla/securecookie"
 	flag "github.com/ogier/pflag"
 )
 
 type configuration struct {
+	Username   string
 	Password   string
 	PublicText string
 	PrivateURL string
@@ -32,6 +32,7 @@ var (
 )
 
 func init() {
+	flag.StringVarP(&config.Username, "username", "u", "", "A username that grants the user access to the secret face.")
 	flag.StringVarP(&config.Password, "password", "p", "", "A password that grants the user access to the secret face.")
 	flag.StringVarP(&config.PublicText, "public-text", "o", "404 Not Found", "Text to serve to unauthenticated users.")
 	flag.StringVarP(&config.PrivateURL, "private", "c", "http://127.0.0.1:8001", "A URL to serve to authenticated users.")
@@ -45,8 +46,8 @@ func main() {
 
 	secureCookie = securecookie.New(securecookie.GenerateRandomKey(aes.BlockSize), securecookie.GenerateRandomKey(aes.BlockSize))
 
-	if config.Password == "" {
-		log.Panic("Please specify a password.")
+	if config.Password == "" || config.Username == "" {
+		log.Panic("Please specify a username and password.")
 	}
 
 	if config.Realm == "" {
@@ -63,13 +64,6 @@ initial authentication passwords will be sent in _plaintext_!
 =======================================================================
 
 `)
-
-	a := auth.NewDigestAuthenticator(config.Realm, func(user, realm string) string {
-		// Yes, I know http digest auth is insecure without TLS
-		sum := md5.Sum([]byte(user + ":" + realm + ":" + config.Password))
-		return hex.EncodeToString(sum[:])
-	})
-
 	privateRemote, err := url.Parse(config.PrivateURL)
 	if err != nil {
 		log.Panic("Couldn't parse private URL; ", err.Error())
@@ -77,13 +71,13 @@ initial authentication passwords will be sent in _plaintext_!
 	proxy := httputil.NewSingleHostReverseProxy(privateRemote)
 
 	http.HandleFunc("/", reverseProxyHandler(proxy))
-	http.HandleFunc("/auth", a.Wrap(authHandler))
+	http.HandleFunc("/auth", basicAuth(authHandler, config.Username, config.Password, config.Realm))
 
 	log.Println("Listening on", config.Bind)
 	log.Panic(http.ListenAndServe(config.Bind, nil))
 }
 
-func authHandler(w http.ResponseWriter, r *auth.AuthenticatedRequest) {
+func authHandler(w http.ResponseWriter, r *http.Request) {
 	data := map[string]string{
 		"token": config.Token,
 	}
@@ -97,7 +91,7 @@ func authHandler(w http.ResponseWriter, r *auth.AuthenticatedRequest) {
 			MaxAge:   2147483647, // Maximum possible value, we don't want this to expire
 		}
 		http.SetCookie(w, cookie)
-		w.Write([]byte("Succsessfully authenticated and stored session cookie as " + r.Username))
+		w.Write([]byte("Succsessfully authenticated and stored session cookie."))
 	} else {
 		w.Write([]byte("Couldn't set cookie; " + err.Error()))
 	}
@@ -115,5 +109,28 @@ func reverseProxyHandler(p *httputil.ReverseProxy) func(http.ResponseWriter, *ht
 
 		w.WriteHeader(http.StatusTeapot)
 		w.Write([]byte(config.PublicText))
+	}
+}
+
+func basicAuth(handler http.HandlerFunc, username, password, realm string) http.HandlerFunc {
+
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		u, p, ok := r.BasicAuth()
+		// Stops length-based timing attacks... Weak hash function is ok because we
+		// just want constant length
+		user := md5.Sum([]byte(u))
+		pass := md5.Sum([]byte(p))
+		actualUsername := md5.Sum([]byte(username))
+		actualPassword := md5.Sum([]byte(password))
+
+		if !ok || subtle.ConstantTimeCompare(user[:], actualUsername[:]) != 1 || subtle.ConstantTimeCompare(pass[:], actualPassword[:]) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="`+realm+`"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte("Unauthorised.\n"))
+			return
+		}
+
+		handler(w, r)
 	}
 }
