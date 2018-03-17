@@ -86,8 +86,6 @@ func authHandler(w http.ResponseWriter, r *auth.AuthenticatedRequest) {
 		"token": config.Token,
 	}
 
-	log.Println(config.Token)
-
 	if encoded, err := secureCookie.Encode(cookieName, data); err == nil {
 		cookie := &http.Cookie{
 			Name:     cookieName,
@@ -113,5 +111,6 @@ func reverseProxyHandler(p *httputil.ReverseProxy) func(http.ResponseWriter, *ht
 		}
 
 		w.Write([]byte(config.PublicText))
+		w.WriteHeader(http.StatusTeapot)
 	}
 }
