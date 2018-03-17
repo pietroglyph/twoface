@@ -77,10 +77,6 @@ initial authentication passwords will be sent in _plaintext_!
 	log.Panic(http.ListenAndServe(config.Bind, nil))
 }
 
-func switchingHandler(w http.ResponseWriter, r *http.Request) {
-
-}
-
 func authHandler(w http.ResponseWriter, r *auth.AuthenticatedRequest) {
 	data := map[string]string{
 		"token": config.Token,
@@ -110,7 +106,7 @@ func reverseProxyHandler(p *httputil.ReverseProxy) func(http.ResponseWriter, *ht
 			}
 		}
 
-		w.Write([]byte(config.PublicText))
 		w.WriteHeader(http.StatusTeapot)
+		w.Write([]byte(config.PublicText))
 	}
 }
