@@ -32,7 +32,7 @@ var (
 
 func init() {
 	flag.StringVarP(&config.Password, "password", "p", "", "A password that grants the user access to the secret face.")
-	flag.StringVarP(&config.PublicText, "public-text", "o", "404 File Not Found", "Text to serve to unauthenticated users.")
+	flag.StringVarP(&config.PublicText, "public-text", "o", "404 Not Found", "Text to serve to unauthenticated users.")
 	flag.StringVarP(&config.PrivateURL, "private", "c", "http://127.0.0.1:8001", "A URL to serve to authenticated users.")
 	flag.StringVarP(&config.Bind, "bind", "b", "localhost:8000", "An address and port to bind to.")
 	flag.StringVarP(&config.Token, "token", "t", uuid.New().String(), "The authentication token to verify authenticated users.")
