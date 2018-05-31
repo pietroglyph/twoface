@@ -2,9 +2,9 @@ package main
 
 import (
 	"crypto/aes"
-	"crypto/md5"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -18,15 +18,16 @@ import (
 )
 
 type configuration struct {
-	Username   string
-	Password   string
-	PublicText string
-	PrivateURL string
-	Bind       string
-	Token      string
-	Realm      string
-	HashKey    []byte
-	BlockKey   []byte
+	Username           string
+	Password           string
+	KillSwitchPassword string
+	PublicText         string
+	PrivateURL         string
+	Bind               string
+	Token              string
+	Realm              string
+	HashKey            []byte
+	BlockKey           []byte
 }
 
 const cookieName = "auth"
@@ -35,13 +36,15 @@ var (
 	config       configuration
 	secureCookie *securecookie.SecureCookie
 
-	hashKeyString  string
-	blockKeyString string
+	hashKeyString    string
+	blockKeyString   string
+	killSwitchActive bool
 )
 
 func init() {
 	flag.StringVarP(&config.Username, "username", "u", "", "A username that grants the user access to the secret face.")
 	flag.StringVarP(&config.Password, "password", "p", "", "A password that grants the user access to the secret face.")
+	flag.StringVarP(&config.KillSwitchPassword, "killpass", "k", "", "An alternate password that (when the flag is set, and when entered by the user) disables serving the secret face to all clients until the service is restarted.")
 	flag.StringVarP(&config.PublicText, "public-text", "o", "404 Not Found", "Text to serve to unauthenticated users.")
 	flag.StringVarP(&config.PrivateURL, "private", "c", "http://127.0.0.1:8001", "A URL to serve to authenticated users.")
 	flag.StringVarP(&config.Bind, "bind", "b", "localhost:8000", "An address and port to bind to.")
@@ -83,7 +86,9 @@ func main() {
 	}
 
 	if config.Password == "" || config.Username == "" {
-		log.Panic("Please specify a username and password.")
+		fmt.Print("Please specify a username and password.\n\n")
+		flag.Usage()
+		return
 	}
 
 	if config.Realm == "" {
@@ -96,9 +101,9 @@ func main() {
 	log.Print(`
 
 =======================================================================
-WARNING! This program uses HTTP Digest Authentication.
-If you do not secure its connection behind a TLS enabled reverse proxy,
-initial authentication passwords will be sent in _plaintext_!
+WARNING! This program uses HTTP Basic Authentication.
+If you do not secure this program's connection behind a TLS enabled reverse
+proxy, initial authentication passwords will be sent in _plaintext_!
 =======================================================================
 
 `)
@@ -109,7 +114,7 @@ initial authentication passwords will be sent in _plaintext_!
 	proxy := httputil.NewSingleHostReverseProxy(privateRemote)
 
 	http.HandleFunc("/", reverseProxyHandler(proxy))
-	http.HandleFunc("/auth", basicAuth(authHandler, config.Username, config.Password, config.Realm))
+	http.HandleFunc("/auth", basicAuth(authHandler, []byte(config.Username), []byte(config.Password), []byte(config.KillSwitchPassword), config.Realm))
 
 	log.Println("Listening on", config.Bind)
 	log.Panic(http.ListenAndServe(config.Bind, nil))
@@ -137,32 +142,31 @@ func authHandler(w http.ResponseWriter, r *http.Request) {
 
 func reverseProxyHandler(p *httputil.ReverseProxy) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if cookie, err := r.Cookie(cookieName); err == nil {
+		if cookie, err := r.Cookie(cookieName); err == nil && !killSwitchActive {
 			value := make(map[string]string)
-			if err = secureCookie.Decode(cookieName, cookie.Value, &value); err == nil {
+			err = secureCookie.Decode(cookieName, cookie.Value, &value)
+			if err == nil && subtle.ConstantTimeCompare([]byte(config.Token), []byte(value[cookieName])) == 1 {
 				p.ServeHTTP(w, r)
 				return
 			}
 		}
 
-		w.WriteHeader(http.StatusTeapot)
+		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte(config.PublicText))
 	}
 }
 
-func basicAuth(handler http.HandlerFunc, username, password, realm string) http.HandlerFunc {
+func basicAuth(handler http.HandlerFunc, actualUsername, actualPassword, killSwitchPassword []byte, realm string) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 
-		u, p, ok := r.BasicAuth()
-		// Stops length-based timing attacks... Weak hash function is ok because we
-		// just want constant length
-		user := md5.Sum([]byte(u))
-		pass := md5.Sum([]byte(p))
-		actualUsername := md5.Sum([]byte(username))
-		actualPassword := md5.Sum([]byte(password))
+		username, password, ok := r.BasicAuth()
 
-		if !ok || subtle.ConstantTimeCompare(user[:], actualUsername[:]) != 1 || subtle.ConstantTimeCompare(pass[:], actualPassword[:]) != 1 {
+		if subtle.ConstantTimeCompare([]byte(password), killSwitchPassword) == 1 && string(killSwitchPassword) != "" {
+			killSwitchActive = true
+		}
+
+		if !ok || subtle.ConstantTimeCompare([]byte(username), actualUsername) != 1 || subtle.ConstantTimeCompare([]byte(password), actualPassword) != 1 {
 			w.Header().Set("WWW-Authenticate", `Basic realm="`+realm+`"`)
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte("Unauthorised.\n"))
