@@ -32,12 +32,13 @@ type configuration struct {
 
 const (
 	cookieName = "auth"
+	tokenName  = "token"
 	authMsg    = "Succsessfully authenticated and stored session cookie."
 )
 
 var (
-	config       configuration
-	secureCookie *securecookie.SecureCookie
+	config    configuration
+	secCookie *securecookie.SecureCookie
 
 	hashKeyString    string
 	blockKeyString   string
@@ -47,7 +48,7 @@ var (
 func init() {
 	flag.StringVarP(&config.Username, "username", "u", "", "A username that grants the user access to the secret face.")
 	flag.StringVarP(&config.Password, "password", "p", "", "A password that grants the user access to the secret face.")
-	flag.StringVarP(&config.KillSwitchPassword, "killpass", "k", "", "An alternate password that (when the flag is set, and when entered by the user) disables serving the secret face to all clients until the service is restarted.")
+	flag.StringVar(&config.KillSwitchPassword, "killpass", "", "An alternate password that (when the flag is set, and when entered by the user) disables serving the secret face to all clients until the service is restarted.")
 	flag.StringVarP(&config.PublicText, "public-text", "o", "404 Not Found", "Text to serve to unauthenticated users.")
 	flag.StringVarP(&config.PrivateURL, "private", "c", "http://127.0.0.1:8001", "A URL to serve to authenticated users.")
 	flag.StringVarP(&config.Bind, "bind", "b", "localhost:8000", "An address and port to bind to.")
@@ -99,7 +100,7 @@ func main() {
 		config.Realm = config.Bind
 	}
 
-	secureCookie = securecookie.New(config.HashKey, config.BlockKey)
+	secCookie = securecookie.New(config.HashKey, config.BlockKey)
 
 	log.Print(`
 
@@ -125,10 +126,10 @@ proxy, initial authentication passwords will be sent in _plaintext_!
 
 func authHandler(w http.ResponseWriter, r *http.Request) {
 	data := map[string]string{
-		"token": config.Token,
+		tokenName: config.Token,
 	}
 
-	if encoded, err := secureCookie.Encode(cookieName, data); err == nil {
+	if encoded, err := secCookie.Encode(cookieName, data); err == nil {
 		cookie := &http.Cookie{
 			Name:     cookieName,
 			Value:    encoded,
@@ -145,11 +146,13 @@ func authHandler(w http.ResponseWriter, r *http.Request) {
 
 func reverseProxyHandler(p *httputil.ReverseProxy) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if cookie, err := r.Cookie(cookieName); err == nil && !killSwitchActive {
+		if cookie, err := r.Cookie(cookieName); err == nil {
 			value := make(map[string]string)
-			err = secureCookie.Decode(cookieName, cookie.Value, &value)
-			if err == nil && subtle.ConstantTimeCompare([]byte(config.Token), []byte(value[cookieName])) == 1 {
+			err = secCookie.Decode(cookieName, cookie.Value, &value)
+			log.Println(config.Token, "-", value[tokenName])
+			if err == nil && subtle.ConstantTimeCompare([]byte(config.Token), []byte(value[tokenName])) == 1 && !killSwitchActive {
 				p.ServeHTTP(w, r)
+				log.Println("Serving the private face to User Agent", r.UserAgent(), "with IP", r.RemoteAddr)
 				return
 			}
 		}
@@ -166,6 +169,7 @@ func basicAuth(handler http.HandlerFunc, actualUsername, actualPassword, killSwi
 
 		if subtle.ConstantTimeCompare([]byte(password), killSwitchPassword) == 1 && string(killSwitchPassword) != "" {
 			killSwitchActive = true
+			log.Println("Kill switch activated by User Agent", r.UserAgent(), "with IP", r.RemoteAddr)
 			w.Write([]byte(authMsg))
 			return
 		}
