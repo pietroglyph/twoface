@@ -30,7 +30,10 @@ type configuration struct {
 	BlockKey           []byte
 }
 
-const cookieName = "auth"
+const (
+	cookieName = "auth"
+	authMsg    = "Succsessfully authenticated and stored session cookie."
+)
 
 var (
 	config       configuration
@@ -134,7 +137,7 @@ func authHandler(w http.ResponseWriter, r *http.Request) {
 			MaxAge:   2147483647, // Maximum possible value, we don't want this to expire
 		}
 		http.SetCookie(w, cookie)
-		w.Write([]byte("Succsessfully authenticated and stored session cookie."))
+		w.Write([]byte(authMsg))
 	} else {
 		w.Write([]byte("Couldn't set cookie; " + err.Error()))
 	}
@@ -157,13 +160,14 @@ func reverseProxyHandler(p *httputil.ReverseProxy) func(http.ResponseWriter, *ht
 }
 
 func basicAuth(handler http.HandlerFunc, actualUsername, actualPassword, killSwitchPassword []byte, realm string) http.HandlerFunc {
-
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		username, password, ok := r.BasicAuth()
 
 		if subtle.ConstantTimeCompare([]byte(password), killSwitchPassword) == 1 && string(killSwitchPassword) != "" {
 			killSwitchActive = true
+			w.Write([]byte(authMsg))
+			return
 		}
 
 		if !ok || subtle.ConstantTimeCompare([]byte(username), actualUsername) != 1 || subtle.ConstantTimeCompare([]byte(password), actualPassword) != 1 {
