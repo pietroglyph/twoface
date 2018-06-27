@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/aes"
 	"crypto/subtle"
 	"encoding/hex"
@@ -28,12 +29,14 @@ type configuration struct {
 	Realm              string
 	HashKey            []byte
 	BlockKey           []byte
+	HTTPSOnlyCookie    bool
 }
 
 const (
-	cookieName = "auth"
-	tokenName  = "token"
-	authMsg    = "Succsessfully authenticated and stored session cookie."
+	cookieName           = "auth"
+	tokenName            = "token"
+	authMsg              = "Succsessfully authenticated and stored session cookie."
+	insecureConfirmation = "I am not running this over HTTP in production"
 )
 
 var (
@@ -58,6 +61,8 @@ func init() {
 	flag.StringVar(&blockKeyString, "block-key", "", `A hexidecimal representation of a `+strconv.Itoa(aes.BlockSize)+` byte block key, to secure authentication cookies.
 	Do 'twoface generate-keys' to get some suitable keys`)
 	flag.StringVarP(&config.Realm, "realm", "r", "", "A string that identifies the authentication popup.")
+	flag.BoolVar(&config.HTTPSOnlyCookie, "secure-cookie", true, `Set the 'secure' flag on the auth cookie, if true cookies will not be sent by browsers over regular http.
+		You should not be running this program in production over a non encrypted connection, so this is set to true by default.`)
 }
 
 func main() {
@@ -90,7 +95,7 @@ func main() {
 	}
 
 	if config.Password == "" || config.Username == "" {
-		fmt.Print("Please specify a username and password.\n\n")
+		fmt.Println("Please specify a username and password.")
 		flag.Usage()
 		return
 	}
@@ -111,6 +116,22 @@ proxy, initial authentication passwords will be sent in _plaintext_!
 =======================================================================
 
 `)
+
+	// Users will have to set this to false to run over http, so this seems like
+	// a good way to ward off some foolishness
+	if !config.HTTPSOnlyCookie {
+		fmt.Print(`Whoah there! You've set the secure cookie flag to false. This will allow browsers
+to send your (admittedly encrypted) cookies over regular HTTP.
+
+Type "` + insecureConfirmation + `" to continue: `)
+
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		if scanner.Text() != insecureConfirmation {
+			return
+		}
+	}
+
 	privateRemote, err := url.Parse(config.PrivateURL)
 	if err != nil {
 		log.Panic("Couldn't parse private URL; ", err.Error())
@@ -135,6 +156,7 @@ func authHandler(w http.ResponseWriter, r *http.Request) {
 			Value:    encoded,
 			Path:     "/",
 			HttpOnly: true,
+			Secure:   config.HTTPSOnlyCookie,
 			MaxAge:   2147483647, // Maximum possible value, we don't want this to expire
 		}
 		http.SetCookie(w, cookie)
