@@ -171,10 +171,8 @@ func reverseProxyHandler(p *httputil.ReverseProxy) func(http.ResponseWriter, *ht
 		if cookie, err := r.Cookie(cookieName); err == nil {
 			value := make(map[string]string)
 			err = secCookie.Decode(cookieName, cookie.Value, &value)
-			log.Println(config.Token, "-", value[tokenName])
 			if err == nil && subtle.ConstantTimeCompare([]byte(config.Token), []byte(value[tokenName])) == 1 && !killSwitchActive {
 				p.ServeHTTP(w, r)
-				log.Println("Serving the private face to User Agent", r.UserAgent(), "with IP", r.RemoteAddr)
 				return
 			}
 		}
